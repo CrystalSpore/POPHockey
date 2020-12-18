@@ -45,14 +45,8 @@ public class NHLPolling {
         //GET request
         String response = getRequest("http://statsapi.web.nhl.com/api/v1/teams/"+teamNumber+"?expand=team.stats");
 
-        System.out.println(response);
-
-        System.out.println("\nBack from GET\n");
-
         //start JSON parse
         JSONObject initialObject = (JSONObject) (new JSONParser().parse(response));
-
-        System.out.println("\nAfter Parser\n");
 
         //Below is "teams List" but will only be 1 team
         JSONArray teamsList = (JSONArray) initialObject.get("teams");

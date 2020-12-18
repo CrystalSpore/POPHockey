@@ -169,9 +169,6 @@ public class Bot extends ListenerAdapter {
                 channel.sendMessage(m).queue();
             }
         } else { //setup logic block
-            //debug statement, will remove later
-            channel.sendMessage("start").queue();
-
             //data for cache (not yet implemented)
             long channelID = channel.getIdLong();
             long guildID = event.getGuild().getIdLong();
@@ -181,7 +178,6 @@ public class Bot extends ListenerAdapter {
                 //testing message for checkNHL method. currently broken on JSON parse
                 numGames = NHLPolling.teamStats(nhlTeamID).getGamesPlayed();
                 channel.sendMessage("guild: " + guildID + " | channel: " + channelID + " | nhlTeamID: " + nhlTeamID + " | Number of Games Played: " + numGames).queue();
-                channel.sendMessage("test").queue();
             } catch (IOException e) {
                 channel.sendMessage("Error w/ NHL api").queue();
                 e.printStackTrace();
@@ -189,7 +185,6 @@ public class Bot extends ListenerAdapter {
                 channel.sendMessage("Error parsing team list").queue();
                 e.printStackTrace();
             }
-            channel.sendMessage("end").queue();
         }
     }
 }
