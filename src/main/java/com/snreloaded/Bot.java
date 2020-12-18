@@ -33,7 +33,7 @@ public class Bot extends ListenerAdapter {
         // We only need 2 intents in this bot. We only respond to messages in guilds and private channels.
         // All other events will be disabled.
         JDA instance = JDABuilder.createLight(args[0], GatewayIntent.GUILD_MESSAGES, GatewayIntent.DIRECT_MESSAGES)
-                .setActivity(Activity.playing("Type !popPing"))
+                .setActivity(Activity.playing("Type ~ping"))
                 .build();
         //We don't immediately add the bot as an event listener, so that we can store the instance into this object
         Bot thisBot = new Bot(instance);
@@ -111,12 +111,12 @@ public class Bot extends ListenerAdapter {
     public void onMessageReceived(MessageReceivedEvent event) {
         Message msg = event.getMessage();
         //check entire text or start of text for command, then call method
-        if (msg.getContentRaw().equals("!popPing")) {
+        if (msg.getContentRaw().equals("~ping")) {
             ping(event);
-        } else if (msg.getContentRaw().equals("!listTeams")) {
+        } else if (msg.getContentRaw().equals("~listTeams")) {
             listTeams(event);
-        } else if (msg.getContentRaw().startsWith("!setupTeam")
-                || msg.getContentRaw().startsWith("!setup ")) {
+        } else if (msg.getContentRaw().startsWith("~setupTeam")
+                || msg.getContentRaw().startsWith("~setup ")) {
             setupTeam(event);
         }
     }
@@ -179,7 +179,7 @@ public class Bot extends ListenerAdapter {
             int numGames;
             try {
                 //testing message for checkNHL method. currently broken on JSON parse
-                numGames = NHLPolling.checkNHL(nhlTeamID).getGamesPlayed();
+                numGames = NHLPolling.teamStats(nhlTeamID).getGamesPlayed();
                 channel.sendMessage("guild: " + guildID + " | channel: " + channelID + " | nhlTeamID: " + nhlTeamID + " | Number of Games Played: " + numGames).queue();
                 channel.sendMessage("test").queue();
             } catch (IOException e) {

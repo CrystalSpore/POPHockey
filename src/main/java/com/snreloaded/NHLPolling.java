@@ -40,7 +40,7 @@ public class NHLPolling {
     }
 
     //check stats for specific NHL team (based on NHL team ID number)
-    public static NHLStats checkNHL(int teamNumber) throws IOException, ParseException {
+    public static NHLStats teamStats(int teamNumber) throws IOException, ParseException {
 
         //GET request
         String response = getRequest("http://statsapi.web.nhl.com/api/v1/teams/"+teamNumber+"?expand=team.stats");
@@ -57,29 +57,13 @@ public class NHLPolling {
         //Below is "teams List" but will only be 1 team
         JSONArray teamsList = (JSONArray) initialObject.get("teams");
         JSONObject team = (JSONObject) teamsList.get(0);
-
-        System.out.println("\nAfter getting team\n");
-
         JSONArray teamStatsArr = (JSONArray) team.get("teamStats");
-
-        System.out.println("\nAfter teamStatsArr\n");
-
         JSONObject teamStats = (JSONObject) teamStatsArr.get(0);
-
-        System.out.println("\nAfter getting \"teamStats\"\n");
-
         JSONArray splits = (JSONArray) teamStats.get("splits");
-
-        System.out.println("\nBefore stats\n");
-
         JSONObject stats = (JSONObject) ((JSONObject)splits.get(0)).get("stat");
-
-        System.out.println("\nAfter JSON manipulation\n");
 
         //serialize parsed JSON to NHLStats object for ease of use in Java
         NHLStats ret = new Gson().fromJson(stats.toJSONString(), NHLStats.class);
-
-        System.out.println("\nBefore Return\n");
 
         return ret;
     }
