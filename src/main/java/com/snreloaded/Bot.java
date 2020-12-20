@@ -1,5 +1,6 @@
 package com.snreloaded;
 
+import it.sauronsoftware.cron4j.Scheduler;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.JDABuilder;
 import net.dv8tion.jda.api.MessageBuilder;
@@ -38,6 +39,20 @@ public class Bot extends ListenerAdapter {
         //We don't immediately add the bot as an event listener, so that we can store the instance into this object
         Bot thisBot = new Bot(instance);
         instance.addEventListener(thisBot);
+
+        //Create new scheduler
+        Scheduler scheduler = new Scheduler();
+
+        //Schedule tasks to run every minute (based on cron timing)
+        scheduler.schedule("* * * * *", new Runnable() {
+            @Override
+            public void run() {
+                thisBot.scheduledStats();
+            }
+        });
+
+        //Start scheduler
+        scheduler.start();
     }
 
     /**
@@ -170,7 +185,7 @@ public class Bot extends ListenerAdapter {
             }
         } else { //setup logic block
             //data for cache (not yet implemented)
-            long channelID = channel.getIdLong();
+            long channelID = event.getTextChannel().getIdLong();
             long guildID = event.getGuild().getIdLong();
             int nhlTeamID = Integer.parseInt(strings[1]);
             int numGames;
@@ -186,5 +201,12 @@ public class Bot extends ListenerAdapter {
                 e.printStackTrace();
             }
         }
+    }
+
+    //scheduled task
+    public void scheduledStats() {
+        TextChannel textChannel = instance.getTextChannelById(788084697078300723L);
+        textChannel.sendMessage("test").queue();
+        System.out.println("test");
     }
 }
