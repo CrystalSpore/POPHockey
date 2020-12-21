@@ -51,13 +51,18 @@ public class NHLPolling {
         //Below is "teams List" but will only be 1 team
         JSONArray teamsList = (JSONArray) initialObject.get("teams");
         JSONObject team = (JSONObject) teamsList.get(0);
+
+        String teamName = (String) team.get("name");
+
         JSONArray teamStatsArr = (JSONArray) team.get("teamStats");
         JSONObject teamStats = (JSONObject) teamStatsArr.get(0);
         JSONArray splits = (JSONArray) teamStats.get("splits");
         JSONObject stats = (JSONObject) ((JSONObject)splits.get(0)).get("stat");
 
         //serialize parsed JSON to NHLStats object for ease of use in Java
-        return new Gson().fromJson(stats.toJSONString(), NHLStats.class);
+        NHLStats ret = new Gson().fromJson(stats.toJSONString(), NHLStats.class);
+        ret.setTeamName(teamName);
+        return ret;
     }
 
     //GET & return list of all teams from NHL API

@@ -27,6 +27,8 @@ public class Bot extends ListenerAdapter {
     private HashMap<cacheKey, cacheValue> cacheMap;
     private final File nhl_cache;
     private static final String CRON_QUARTER_HOUR = "0,15,30,45 * * * *";
+    private static final String CRON_ONE_MINUTE = "* * * * *";
+    private static final String cacheVersion = "v1.0";
 
     public static void main(String[] args) throws LoginException {
         if (args.length < 1) {
@@ -79,10 +81,16 @@ public class Bot extends ListenerAdapter {
     private static class cacheValue {
         int teamID;
         int numGames;
+        int numWins;
+        int numLosses;
+        boolean statsPublisher;
 
-        public cacheValue(int teamID, int numGames) {
+        public cacheValue(int teamID, int numGames, int numWins, int numLosses, boolean statsPublisher) {
             this.teamID = teamID;
             this.numGames = numGames;
+            this.numWins = numWins;
+            this.numLosses = numLosses;
+            this.statsPublisher = statsPublisher;
         }
 
         public int getTeamID() {
@@ -93,8 +101,16 @@ public class Bot extends ListenerAdapter {
             return numGames;
         }
 
-        public void setNumGames(int numGames) {
-            this.numGames = numGames;
+        public int getNumWins() {
+            return numWins;
+        }
+
+        public int getNumLosses() {
+            return numLosses;
+        }
+
+        public boolean isStatsPublisher() {
+            return statsPublisher;
         }
     }
 
@@ -115,6 +131,15 @@ public class Bot extends ListenerAdapter {
                 e.printStackTrace();
             }
             if (fin != null) {
+                if ( fin.hasNext() ) {
+                    String line = fin.nextLine();
+                    if ( !line.equals(cacheVersion) ) {
+                        System.err.println("Cache needs to be updated. " +
+                                "Please run update script or manually update based on spec.");
+                        System.exit(0);
+                        return;
+                    }
+                }
                 while ( fin.hasNext() ) {
                     String line = fin.nextLine();
                     String[] splitLine = line.split(":");
@@ -125,7 +150,10 @@ public class Bot extends ListenerAdapter {
                             ),
                             new cacheValue(
                                     Integer.parseInt(splitLine[2]),
-                                    Integer.parseInt(splitLine[3])
+                                    Integer.parseInt(splitLine[3]),
+                                    Integer.parseInt(splitLine[4]),
+                                    Integer.parseInt(splitLine[5]),
+                                    Boolean.parseBoolean(splitLine[6])
                             )
                     );
                 }
@@ -133,7 +161,6 @@ public class Bot extends ListenerAdapter {
         } else { // otherwise create the file
             try {
                 //ignoring output due to checking existence above
-                //noinspection ResultOfMethodCallIgnored
                 nhl_cache.createNewFile();
             } catch (IOException e) {
                 e.printStackTrace();
@@ -206,23 +233,47 @@ public class Bot extends ListenerAdapter {
             long channelID = event.getTextChannel().getIdLong();
             int nhlTeamID = Integer.parseInt(strings[1]);
             int numGames;
+            int numWins;
+            int numLosses;
 
             boolean keyExists = false;
+            boolean statsPublisher = false;
+            if ( strings.length >= 3 &&
+                    (strings[2].equals("1") || strings[2].equalsIgnoreCase("true")
+                            || strings[2].equalsIgnoreCase("t") || strings[2].equalsIgnoreCase("y")
+                            || strings[2].equalsIgnoreCase("yes")
+                    )
+            ) {
+                statsPublisher = true;
+            }
+
             for ( cacheKey key : cacheMap.keySet() ) {
                 if ( key.getGuildID() == guildID && key.getChannelID() == channelID ) {
-                    channel.sendMessage("There is already a team setup for this channel. Please remove team from channel before attempting to setup a new team.").queue();
+                    if ( !statsPublisher ) {
+                        channel.sendMessage("There is already a team setup for this channel. " +
+                                "Please remove team from channel before attempting to setup a new team.").queue();
+                    }
                     keyExists = true;
                     break;
                 }
             }
 
-            if (!keyExists) {
+            if (!keyExists || statsPublisher) {
                 try {
                     //testing message for checkNHL method. currently broken on JSON parse
-                    numGames = NHLPolling.teamStats(nhlTeamID).getGamesPlayed();
+                    NHLStats teamStats = NHLPolling.teamStats(nhlTeamID);
+                    numGames = teamStats.getGamesPlayed();
+                    numWins = teamStats.getWins();
+                    numLosses = teamStats.getLosses();
                     channel.sendMessage("guild: " + guildID + " | channel: " + channelID + " | nhlTeamID: " + nhlTeamID + " | Number of Games Played: " + numGames).queue();
-                    cacheMap.put(new cacheKey(guildID, channelID), new cacheValue(nhlTeamID, numGames));
-                    Files.write(Paths.get(nhl_cache.getAbsolutePath()), (guildID + ":" + channelID + ":" + nhlTeamID + ":" + numGames + "\n").getBytes(), StandardOpenOption.APPEND);
+                    cacheMap.put(new cacheKey(guildID, channelID), new cacheValue(nhlTeamID, numGames, numWins, numLosses, statsPublisher));
+                    Files.write(Paths.get(nhl_cache.getAbsolutePath()), (guildID + ":" +
+                            channelID + ":" +
+                            nhlTeamID + ":" +
+                            numGames + ":" +
+                            numWins + ":" +
+                            numLosses + ":" +
+                            statsPublisher + "\n").getBytes(), StandardOpenOption.APPEND);
                 } catch (IOException e) {
                     channel.sendMessage("Error w/ NHL api").queue();
                     e.printStackTrace();
@@ -236,20 +287,71 @@ public class Bot extends ListenerAdapter {
 
     //scheduled task
     public void scheduledStats() {
+        boolean cacheChanged = false;
+        //loop through all entries of cache to check for changes
         for ( Map.Entry<cacheKey, cacheValue> e : cacheMap.entrySet() ) {
+            //setup values for ease of use later
             long textChannelID = e.getKey().getChannelID();
             int teamNumber = e.getValue().getTeamID();
             TextChannel textChannel = instance.getTextChannelById(textChannelID);
             assert textChannel != null;
             try {
-                NHLStats stats = NHLPolling.teamStats(teamNumber);
-                MessageBuilder builder = new MessageBuilder();
-                builder.appendCodeBlock(stats.toString(), "");
-                Queue<Message> messages = builder.buildAll(MessageBuilder.SplitPolicy.NEWLINE);
-                for (Message m : messages) {
-                    textChannel.sendMessage(m).queue();
+                NHLStats teamStats = NHLPolling.teamStats(teamNumber);
+
+                //stats publisher block, being the full stats listing
+                if ( teamStats.getGamesPlayed() != e.getValue().getNumGames() && e.getValue().isStatsPublisher()) {
+                    MessageBuilder builder = new MessageBuilder();
+                    builder.appendCodeBlock(teamStats.toString(), "");
+                    Queue<Message> messages = builder.buildAll(MessageBuilder.SplitPolicy.NEWLINE);
+                    for (Message m : messages) {
+                        textChannel.sendMessage(m).queue();
+                    }
+                    //update value in cache
+                    cacheMap.put(e.getKey(), new cacheValue(
+                            e.getValue().getTeamID(), teamStats.getGamesPlayed(),
+                            teamStats.getWins(), teamStats.getLosses(), e.getValue().isStatsPublisher()
+                    ));
+                    cacheChanged = true;
+
+                //simple win/lose block
+                } else if(teamStats.getGamesPlayed() != e.getValue().getNumGames() && !e.getValue().isStatsPublisher()) {
+                    //recorded less than actual, indicates a win or loss
+                    if ( e.getValue().getNumWins() < teamStats.getWins() ) {
+                        textChannel.sendMessage(teamStats.getTeamName() + " won!").queue();
+                    }
+                    else if ( e.getValue().getNumLosses() < teamStats.getLosses() ) {
+                        textChannel.sendMessage(teamStats.getTeamName() + " lost").queue();
+                    }
+                    //update value in cache
+                    cacheMap.put(e.getKey(), new cacheValue(
+                            e.getValue().getTeamID(), teamStats.getGamesPlayed(),
+                            teamStats.getWins(), teamStats.getLosses(), e.getValue().isStatsPublisher()
+                    ));
+                    cacheChanged = true;
                 }
             } catch (IOException | ParseException ex) {
+                ex.printStackTrace();
+            }
+        }
+
+        if (cacheChanged) {
+            try {
+                // delete & remake before writing
+                nhl_cache.delete();
+                nhl_cache.createNewFile();
+                // write cache version
+                Files.write(Paths.get(nhl_cache.getAbsolutePath()), (cacheVersion + "\n").getBytes(), StandardOpenOption.APPEND);
+                // write all of cache back out
+                for ( Map.Entry<cacheKey, cacheValue> e : cacheMap.entrySet() ) {
+                    Files.write(Paths.get(nhl_cache.getAbsolutePath()), (e.getKey().getGuildID() + ":" +
+                            e.getKey().getChannelID() + ":" +
+                            e.getValue().getTeamID() + ":" +
+                            e.getValue().getNumGames() + ":" +
+                            e.getValue().getNumWins() + ":" +
+                            e.getValue().getNumLosses() + ":" +
+                            e.getValue().isStatsPublisher() + "\n").getBytes(), StandardOpenOption.APPEND);
+                }
+            } catch (IOException ex) {
                 ex.printStackTrace();
             }
         }

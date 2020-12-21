@@ -1,6 +1,7 @@
 package com.snreloaded;
 
 public class NHLStats {
+    private String teamName;
     private int gamesPlayed;
     private int wins;
     private int losses;
@@ -30,7 +31,8 @@ public class NHLStats {
     private float shootingPctg;
     private float savePctg;
 
-    public NHLStats(int gamesPlayed, int wins, int losses, int ot, int pts, String ptPctg, float goalsPerGame, float goalsAgainstPerGame, float evGGARation, String powerPlayPercentage, float powerPlayGoals, float powerPlayGoalsAgainst, float powerPlayOpportunities, String penaltyKillPercentage, float shotsPerGame, float shotsAllowed, float winScoreFirst, float winOppScoreFirst, float winLeadFirstPer, float winLeadSecondPer, float winOutshootOpp, float winOutshotByOpp, float faceOffsTaken, float faceOffsWon, float faceOffsLost, String faceOffWinPercentage, float shootingPctg, float savePctg) {
+    public NHLStats(String teamName, int gamesPlayed, int wins, int losses, int ot, int pts, String ptPctg, float goalsPerGame, float goalsAgainstPerGame, float evGGARation, String powerPlayPercentage, float powerPlayGoals, float powerPlayGoalsAgainst, float powerPlayOpportunities, String penaltyKillPercentage, float shotsPerGame, float shotsAllowed, float winScoreFirst, float winOppScoreFirst, float winLeadFirstPer, float winLeadSecondPer, float winOutshootOpp, float winOutshotByOpp, float faceOffsTaken, float faceOffsWon, float faceOffsLost, String faceOffWinPercentage, float shootingPctg, float savePctg) {
+        this.teamName = teamName;
         this.gamesPlayed = gamesPlayed;
         this.wins = wins;
         this.losses = losses;
@@ -59,6 +61,14 @@ public class NHLStats {
         this.faceOffWinPercentage = faceOffWinPercentage;
         this.shootingPctg = shootingPctg;
         this.savePctg = savePctg;
+    }
+
+    public void setTeamName(String teamName) {
+        this.teamName = teamName;
+    }
+
+    public String getTeamName() {
+        return teamName;
     }
 
     public int getGamesPlayed() {
@@ -175,7 +185,7 @@ public class NHLStats {
 
     @Override
     public String toString() {
-        return "NHLStats{" +
+        return teamName + " {" +
                 "\n\tgamesPlayed=" + gamesPlayed +
                 "\n\twins=" + wins +
                 "\n\tlosses=" + losses +
