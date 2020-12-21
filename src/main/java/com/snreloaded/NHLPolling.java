@@ -15,7 +15,7 @@ import java.util.Scanner;
 public class NHLPolling {
 
     // GET request without needing external libraries. GET on webAddr
-    public static String getRequest(String webAddr) throws IOException {
+    private static String getRequest(String webAddr) throws IOException {
 
         //setup, connect, & receive response code
         URL url = new URL(webAddr);
@@ -57,9 +57,7 @@ public class NHLPolling {
         JSONObject stats = (JSONObject) ((JSONObject)splits.get(0)).get("stat");
 
         //serialize parsed JSON to NHLStats object for ease of use in Java
-        NHLStats ret = new Gson().fromJson(stats.toJSONString(), NHLStats.class);
-
-        return ret;
+        return new Gson().fromJson(stats.toJSONString(), NHLStats.class);
     }
 
     //GET & return list of all teams from NHL API

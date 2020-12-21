@@ -3,7 +3,7 @@ package com.snreloaded;
 public class NHLStats {
     private int gamesPlayed;
     private int wins;
-    private int loses;
+    private int losses;
     private int ot;
     private int pts;
     private String ptPctg;
@@ -30,10 +30,10 @@ public class NHLStats {
     private float shootingPctg;
     private float savePctg;
 
-    public NHLStats(int gamesPlayed, int wins, int loses, int ot, int pts, String ptPctg, float goalsPerGame, float goalsAgainstPerGame, float evGGARation, String powerPlayPercentage, float powerPlayGoals, float powerPlayGoalsAgainst, float powerPlayOpportunities, String penaltyKillPercentage, float shotsPerGame, float shotsAllowed, float winScoreFirst, float winOppScoreFirst, float winLeadFirstPer, float winLeadSecondPer, float winOutshootOpp, float winOutshotByOpp, float faceOffsTaken, float faceOffsWon, float faceOffsLost, String faceOffWinPercentage, float shootingPctg, float savePctg) {
+    public NHLStats(int gamesPlayed, int wins, int losses, int ot, int pts, String ptPctg, float goalsPerGame, float goalsAgainstPerGame, float evGGARation, String powerPlayPercentage, float powerPlayGoals, float powerPlayGoalsAgainst, float powerPlayOpportunities, String penaltyKillPercentage, float shotsPerGame, float shotsAllowed, float winScoreFirst, float winOppScoreFirst, float winLeadFirstPer, float winLeadSecondPer, float winOutshootOpp, float winOutshotByOpp, float faceOffsTaken, float faceOffsWon, float faceOffsLost, String faceOffWinPercentage, float shootingPctg, float savePctg) {
         this.gamesPlayed = gamesPlayed;
         this.wins = wins;
-        this.loses = loses;
+        this.losses = losses;
         this.ot = ot;
         this.pts = pts;
         this.ptPctg = ptPctg;
@@ -69,8 +69,8 @@ public class NHLStats {
         return wins;
     }
 
-    public int getLoses() {
-        return loses;
+    public int getLosses() {
+        return losses;
     }
 
     public int getOt() {
@@ -171,5 +171,39 @@ public class NHLStats {
 
     public float getSavePctg() {
         return savePctg;
+    }
+
+    @Override
+    public String toString() {
+        return "NHLStats{" +
+                "\n\tgamesPlayed=" + gamesPlayed +
+                "\n\twins=" + wins +
+                "\n\tlosses=" + losses +
+                "\n\tot=" + ot +
+                "\n\tpts=" + pts +
+                "\n\tptPctg='" + ptPctg + '\'' +
+                "\n\tgoalsPerGame=" + goalsPerGame +
+                "\n\tgoalsAgainstPerGame=" + goalsAgainstPerGame +
+                "\n\tevGGARation=" + evGGARation +
+                "\n\tpowerPlayPercentage='" + powerPlayPercentage + '\'' +
+                "\n\tpowerPlayGoals=" + powerPlayGoals +
+                "\n\tpowerPlayGoalsAgainst=" + powerPlayGoalsAgainst +
+                "\n\tpowerPlayOpportunities=" + powerPlayOpportunities +
+                "\n\tpenaltyKillPercentage='" + penaltyKillPercentage + '\'' +
+                "\n\tshotsPerGame=" + shotsPerGame +
+                "\n\tshotsAllowed=" + shotsAllowed +
+                "\n\twinScoreFirst=" + winScoreFirst +
+                "\n\twinOppScoreFirst=" + winOppScoreFirst +
+                "\n\twinLeadFirstPer=" + winLeadFirstPer +
+                "\n\twinLeadSecondPer=" + winLeadSecondPer +
+                "\n\twinOutshootOpp=" + winOutshootOpp +
+                "\n\twinOutshotByOpp=" + winOutshotByOpp +
+                "\n\tfaceOffsTaken=" + faceOffsTaken +
+                "\n\tfaceOffsWon=" + faceOffsWon +
+                "\n\tfaceOffsLost=" + faceOffsLost +
+                "\n\tfaceOffWinPercentage='" + faceOffWinPercentage + '\'' +
+                "\n\tshootingPctg=" + shootingPctg +
+                "\n\tsavePctg=" + savePctg +
+                "\n}";
     }
 }

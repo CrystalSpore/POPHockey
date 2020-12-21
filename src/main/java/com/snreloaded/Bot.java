@@ -4,6 +4,7 @@ import it.sauronsoftware.cron4j.Scheduler;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.JDABuilder;
 import net.dv8tion.jda.api.MessageBuilder;
+import net.dv8tion.jda.api.Permission;
 import net.dv8tion.jda.api.entities.*;
 import net.dv8tion.jda.api.events.message.MessageReceivedEvent;
 import net.dv8tion.jda.api.hooks.ListenerAdapter;
@@ -15,15 +16,17 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.util.HashMap;
-import java.util.Queue;
-import java.util.Scanner;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
+import java.util.*;
 
 public class Bot extends ListenerAdapter {
 
-    JDA instance;
-    HashMap<Long, cacheData> cacheMap;
-    File nhl_cache;
+    private final JDA instance;
+    private HashMap<cacheKey, cacheValue> cacheMap;
+    private final File nhl_cache;
+    private static final String CRON_QUARTER_HOUR = "0,15,30,45 * * * *";
 
     public static void main(String[] args) throws LoginException {
         if (args.length < 1) {
@@ -43,34 +46,43 @@ public class Bot extends ListenerAdapter {
         //Create new scheduler
         Scheduler scheduler = new Scheduler();
 
-        //Schedule tasks to run every minute (based on cron timing)
-        scheduler.schedule("* * * * *", new Runnable() {
-            @Override
-            public void run() {
-                thisBot.scheduledStats();
-            }
-        });
+        //Schedule tasks to run every quarter hour, starting on the hour (based on cron timing, eg https://crontab.guru/#0,15,30,45_*_*_*_* )
+        scheduler.schedule(CRON_QUARTER_HOUR, thisBot::scheduledStats);
 
         //Start scheduler
         scheduler.start();
     }
 
-    /**
-     * data structure for our cached data
-     */
-    protected class cacheData {
+    /** guild & channel for our cached data */
+    private static class cacheKey {
+        long guildID;
         long channelID;
-        int teamID;
-        int numGames;
 
-        public cacheData(long channelID, int teamID, int numGames) {
+        public cacheKey(long guildID, long channelID) {
+            this.guildID = guildID;
             this.channelID = channelID;
-            this.teamID = teamID;
-            this.numGames = numGames;
+        }
+
+
+        public long getGuildID() {
+            return guildID;
         }
 
         public long getChannelID() {
             return channelID;
+        }
+    }
+
+    /**
+     * data structure for our cached data
+     */
+    private static class cacheValue {
+        int teamID;
+        int numGames;
+
+        public cacheValue(int teamID, int numGames) {
+            this.teamID = teamID;
+            this.numGames = numGames;
         }
 
         public int getTeamID() {
@@ -106,15 +118,22 @@ public class Bot extends ListenerAdapter {
                 while ( fin.hasNext() ) {
                     String line = fin.nextLine();
                     String[] splitLine = line.split(":");
-                    cacheMap.put(Long.parseLong(splitLine[0]),
-                            new cacheData( Long.parseLong(splitLine[1]),
+                    cacheMap.put(
+                            new cacheKey(
+                                    Long.parseLong(splitLine[0]),
+                                    Long.parseLong(splitLine[1])
+                            ),
+                            new cacheValue(
                                     Integer.parseInt(splitLine[2]),
-                                    Integer.parseInt(splitLine[3])));
+                                    Integer.parseInt(splitLine[3])
+                            )
+                    );
                 }
             }
         } else { // otherwise create the file
             try {
                 //ignoring output due to checking existence above
+                //noinspection ResultOfMethodCallIgnored
                 nhl_cache.createNewFile();
             } catch (IOException e) {
                 e.printStackTrace();
@@ -130,8 +149,8 @@ public class Bot extends ListenerAdapter {
             ping(event);
         } else if (msg.getContentRaw().equals("~listTeams")) {
             listTeams(event);
-        } else if (msg.getContentRaw().startsWith("~setupTeam")
-                || msg.getContentRaw().startsWith("~setup ")) {
+        } else if ( (msg.getContentRaw().startsWith("~setupTeam")
+                || msg.getContentRaw().startsWith("~setup ") ) && Objects.requireNonNull(msg.getMember()).hasPermission(Permission.ADMINISTRATOR)) {
             setupTeam(event);
         }
     }
@@ -141,9 +160,7 @@ public class Bot extends ListenerAdapter {
         MessageChannel channel = event.getChannel();
         long time = System.currentTimeMillis();
         channel.sendMessage("Pong!") /* => RestAction<Message> */
-                .queue(response /* => Message */ -> {
-                    response.editMessageFormat("Pong: %d ms", System.currentTimeMillis() - time).queue();
-                });
+                .queue(response /* => Message */ -> response.editMessageFormat("Pong: %d ms", System.currentTimeMillis() - time).queue());
     }
 
     //list all teams that NHL reports back from API
@@ -176,7 +193,7 @@ public class Bot extends ListenerAdapter {
         String[] strings = event.getMessage().getContentRaw().split(" ");
 
         //help block
-        if ( strings.length == 1 || strings[1].toLowerCase().equals("h") || strings[1].toLowerCase().equals("help") ) {
+        if ( strings.length == 1 || strings[1].equalsIgnoreCase("h") || strings[1].equalsIgnoreCase("help") ) {
             MessageBuilder builder = new MessageBuilder();
             builder.appendCodeBlock("Format as > !setupTeam <teamID>\n\tSetup NHL team listener in current channel.\n\tUse !listTeams to find the teamID.","");
             Queue<Message> messages = builder.buildAll(MessageBuilder.SplitPolicy.NEWLINE);
@@ -185,28 +202,56 @@ public class Bot extends ListenerAdapter {
             }
         } else { //setup logic block
             //data for cache (not yet implemented)
-            long channelID = event.getTextChannel().getIdLong();
             long guildID = event.getGuild().getIdLong();
+            long channelID = event.getTextChannel().getIdLong();
             int nhlTeamID = Integer.parseInt(strings[1]);
             int numGames;
-            try {
-                //testing message for checkNHL method. currently broken on JSON parse
-                numGames = NHLPolling.teamStats(nhlTeamID).getGamesPlayed();
-                channel.sendMessage("guild: " + guildID + " | channel: " + channelID + " | nhlTeamID: " + nhlTeamID + " | Number of Games Played: " + numGames).queue();
-            } catch (IOException e) {
-                channel.sendMessage("Error w/ NHL api").queue();
-                e.printStackTrace();
-            } catch (ParseException e) {
-                channel.sendMessage("Error parsing team list").queue();
-                e.printStackTrace();
+
+            boolean keyExists = false;
+            for ( cacheKey key : cacheMap.keySet() ) {
+                if ( key.getGuildID() == guildID && key.getChannelID() == channelID ) {
+                    channel.sendMessage("There is already a team setup for this channel. Please remove team from channel before attempting to setup a new team.").queue();
+                    keyExists = true;
+                    break;
+                }
+            }
+
+            if (!keyExists) {
+                try {
+                    //testing message for checkNHL method. currently broken on JSON parse
+                    numGames = NHLPolling.teamStats(nhlTeamID).getGamesPlayed();
+                    channel.sendMessage("guild: " + guildID + " | channel: " + channelID + " | nhlTeamID: " + nhlTeamID + " | Number of Games Played: " + numGames).queue();
+                    cacheMap.put(new cacheKey(guildID, channelID), new cacheValue(nhlTeamID, numGames));
+                    Files.write(Paths.get(nhl_cache.getAbsolutePath()), (guildID + ":" + channelID + ":" + nhlTeamID + ":" + numGames + "\n").getBytes(), StandardOpenOption.APPEND);
+                } catch (IOException e) {
+                    channel.sendMessage("Error w/ NHL api").queue();
+                    e.printStackTrace();
+                } catch (ParseException e) {
+                    channel.sendMessage("Error parsing team list").queue();
+                    e.printStackTrace();
+                }
             }
         }
     }
 
     //scheduled task
     public void scheduledStats() {
-        TextChannel textChannel = instance.getTextChannelById(788084697078300723L);
-        textChannel.sendMessage("test").queue();
-        System.out.println("test");
+        for ( Map.Entry<cacheKey, cacheValue> e : cacheMap.entrySet() ) {
+            long textChannelID = e.getKey().getChannelID();
+            int teamNumber = e.getValue().getTeamID();
+            TextChannel textChannel = instance.getTextChannelById(textChannelID);
+            assert textChannel != null;
+            try {
+                NHLStats stats = NHLPolling.teamStats(teamNumber);
+                MessageBuilder builder = new MessageBuilder();
+                builder.appendCodeBlock(stats.toString(), "");
+                Queue<Message> messages = builder.buildAll(MessageBuilder.SplitPolicy.NEWLINE);
+                for (Message m : messages) {
+                    textChannel.sendMessage(m).queue();
+                }
+            } catch (IOException | ParseException ex) {
+                ex.printStackTrace();
+            }
+        }
     }
 }
