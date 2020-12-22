@@ -248,7 +248,8 @@ public class Bot extends ListenerAdapter {
             }
 
             for ( cacheKey key : cacheMap.keySet() ) {
-                if ( key.getGuildID() == guildID && key.getChannelID() == channelID ) {
+                if ( key.getGuildID() == guildID && key.getChannelID() == channelID && !cacheMap.get(key).isStatsPublisher() ) {
+                    //only allow one hockey team per channel, but allow all stats to be posted in one channel
                     if ( !statsPublisher ) {
                         channel.sendMessage("There is already a team setup for this channel. " +
                                 "Please remove team from channel before attempting to setup a new team.").queue();
@@ -260,12 +261,11 @@ public class Bot extends ListenerAdapter {
 
             if (!keyExists || statsPublisher) {
                 try {
-                    //testing message for checkNHL method. currently broken on JSON parse
                     NHLStats teamStats = NHLPolling.teamStats(nhlTeamID);
                     numGames = teamStats.getGamesPlayed();
                     numWins = teamStats.getWins();
                     numLosses = teamStats.getLosses();
-                    channel.sendMessage("guild: " + guildID + " | channel: " + channelID + " | nhlTeamID: " + nhlTeamID + " | Number of Games Played: " + numGames).queue();
+                    channel.sendMessage("Setup \"" + teamStats.getTeamName() + "\" for this channel.").queue();
                     cacheMap.put(new cacheKey(guildID, channelID), new cacheValue(nhlTeamID, numGames, numWins, numLosses, statsPublisher));
                     Files.write(Paths.get(nhl_cache.getAbsolutePath()), (guildID + ":" +
                             channelID + ":" +
@@ -298,62 +298,80 @@ public class Bot extends ListenerAdapter {
             try {
                 NHLStats teamStats = NHLPolling.teamStats(teamNumber);
 
+                //Currently unsure if all teams reset to 0, or only update when game 1 happens
+                if ( teamStats.getGamesPlayed() == 0 || teamStats.getGamesPlayed() == 1 )
+                {
+                    textChannel.sendMessage("Start of new season!").queue();
+                }
                 //stats publisher block, being the full stats listing
                 if ( teamStats.getGamesPlayed() != e.getValue().getNumGames() && e.getValue().isStatsPublisher()) {
-                    MessageBuilder builder = new MessageBuilder();
-                    builder.appendCodeBlock(teamStats.toString(), "");
-                    Queue<Message> messages = builder.buildAll(MessageBuilder.SplitPolicy.NEWLINE);
-                    for (Message m : messages) {
-                        textChannel.sendMessage(m).queue();
-                    }
-                    //update value in cache
-                    cacheMap.put(e.getKey(), new cacheValue(
-                            e.getValue().getTeamID(), teamStats.getGamesPlayed(),
-                            teamStats.getWins(), teamStats.getLosses(), e.getValue().isStatsPublisher()
-                    ));
+                    printStats(teamStats, textChannel);
+                    updateCacheEntry(e, teamStats);
                     cacheChanged = true;
 
                 //simple win/lose block
                 } else if(teamStats.getGamesPlayed() != e.getValue().getNumGames() && !e.getValue().isStatsPublisher()) {
-                    //recorded less than actual, indicates a win or loss
-                    if ( e.getValue().getNumWins() < teamStats.getWins() ) {
-                        textChannel.sendMessage(teamStats.getTeamName() + " won!").queue();
-                    }
-                    else if ( e.getValue().getNumLosses() < teamStats.getLosses() ) {
-                        textChannel.sendMessage(teamStats.getTeamName() + " lost").queue();
-                    }
-                    //update value in cache
-                    cacheMap.put(e.getKey(), new cacheValue(
-                            e.getValue().getTeamID(), teamStats.getGamesPlayed(),
-                            teamStats.getWins(), teamStats.getLosses(), e.getValue().isStatsPublisher()
-                    ));
+                    winOrLoss(e, teamStats, textChannel);
+                    updateCacheEntry(e, teamStats);
                     cacheChanged = true;
                 }
+            // print failure, but don't message discord, since this is a scheduled task
             } catch (IOException | ParseException ex) {
                 ex.printStackTrace();
             }
         }
 
         if (cacheChanged) {
-            try {
-                // delete & remake before writing
-                nhl_cache.delete();
-                nhl_cache.createNewFile();
-                // write cache version
-                Files.write(Paths.get(nhl_cache.getAbsolutePath()), (cacheVersion + "\n").getBytes(), StandardOpenOption.APPEND);
-                // write all of cache back out
-                for ( Map.Entry<cacheKey, cacheValue> e : cacheMap.entrySet() ) {
-                    Files.write(Paths.get(nhl_cache.getAbsolutePath()), (e.getKey().getGuildID() + ":" +
-                            e.getKey().getChannelID() + ":" +
-                            e.getValue().getTeamID() + ":" +
-                            e.getValue().getNumGames() + ":" +
-                            e.getValue().getNumWins() + ":" +
-                            e.getValue().getNumLosses() + ":" +
-                            e.getValue().isStatsPublisher() + "\n").getBytes(), StandardOpenOption.APPEND);
-                }
-            } catch (IOException ex) {
-                ex.printStackTrace();
+            rewriteCacheFile();
+        }
+    }
+
+    public void printStats(NHLStats teamStats, TextChannel textChannel) {
+        MessageBuilder builder = new MessageBuilder();
+        builder.appendCodeBlock(teamStats.toString(), "");
+        Queue<Message> messages = builder.buildAll(MessageBuilder.SplitPolicy.NEWLINE);
+        for (Message m : messages) {
+            textChannel.sendMessage(m).queue();
+        }
+    }
+
+    public void winOrLoss(Map.Entry<cacheKey, cacheValue> e, NHLStats teamStats, TextChannel textChannel) {
+        //recorded less than actual, indicates a win or loss
+        if ( e.getValue().getNumWins() < teamStats.getWins() ) {
+            textChannel.sendMessage(teamStats.getTeamName() + " won!").queue();
+        }
+        else if ( e.getValue().getNumLosses() < teamStats.getLosses() ) {
+            textChannel.sendMessage(teamStats.getTeamName() + " lost").queue();
+        }
+    }
+
+    //update value in cache
+    public void updateCacheEntry(Map.Entry<cacheKey, cacheValue> e, NHLStats teamStats) {
+        cacheMap.put(e.getKey(), new cacheValue(
+                e.getValue().getTeamID(), teamStats.getGamesPlayed(),
+                teamStats.getWins(), teamStats.getLosses(), e.getValue().isStatsPublisher()
+        ));
+    }
+
+    public void rewriteCacheFile() {
+        try {
+            // delete & remake before writing
+            nhl_cache.delete();
+            nhl_cache.createNewFile();
+            // write cache version
+            Files.write(Paths.get(nhl_cache.getAbsolutePath()), (cacheVersion + "\n").getBytes(), StandardOpenOption.APPEND);
+            // write all of cache back out
+            for ( Map.Entry<cacheKey, cacheValue> e : cacheMap.entrySet() ) {
+                Files.write(Paths.get(nhl_cache.getAbsolutePath()), (e.getKey().getGuildID() + ":" +
+                        e.getKey().getChannelID() + ":" +
+                        e.getValue().getTeamID() + ":" +
+                        e.getValue().getNumGames() + ":" +
+                        e.getValue().getNumWins() + ":" +
+                        e.getValue().getNumLosses() + ":" +
+                        e.getValue().isStatsPublisher() + "\n").getBytes(), StandardOpenOption.APPEND);
             }
+        } catch (IOException ex) {
+            ex.printStackTrace();
         }
     }
 }
