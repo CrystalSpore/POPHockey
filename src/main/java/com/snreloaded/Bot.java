@@ -26,7 +26,7 @@ public class Bot extends ListenerAdapter {
     private final JDA instance;
     private HashMap<cacheKey, cacheValue> cacheMap;
     private final File nhl_cache;
-    private static final String CRON_QUARTER_HOUR = "0,15,30,45 * * * *";
+    private static final String CRON_QUARTER_HOUR = "0,15,30,45 * * * *"; //https://crontab.guru/#0,15,30,45_*_*_*_*
     private static final String CRON_ONE_MINUTE = "* * * * *";
     private static final String cacheVersion = "v1.0";
 
@@ -48,7 +48,7 @@ public class Bot extends ListenerAdapter {
         //Create new scheduler
         Scheduler scheduler = new Scheduler();
 
-        //Schedule tasks to run every quarter hour, starting on the hour (based on cron timing, eg https://crontab.guru/#0,15,30,45_*_*_*_* )
+        //Schedule tasks to based on cron timing
         scheduler.schedule(CRON_QUARTER_HOUR, thisBot::scheduledStats);
 
         //Start scheduler
@@ -83,13 +83,15 @@ public class Bot extends ListenerAdapter {
         int numGames;
         int numWins;
         int numLosses;
+        int numOTLosses;
         boolean statsPublisher;
 
-        public cacheValue(int teamID, int numGames, int numWins, int numLosses, boolean statsPublisher) {
+        public cacheValue(int teamID, int numGames, int numWins, int numLosses, int numOTLosses, boolean statsPublisher) {
             this.teamID = teamID;
             this.numGames = numGames;
             this.numWins = numWins;
             this.numLosses = numLosses;
+            this.numOTLosses = numOTLosses;
             this.statsPublisher = statsPublisher;
         }
 
@@ -109,6 +111,10 @@ public class Bot extends ListenerAdapter {
             return numLosses;
         }
 
+        public int getNumOTLosses() {
+            return numOTLosses;
+        }
+
         public boolean isStatsPublisher() {
             return statsPublisher;
         }
@@ -122,7 +128,7 @@ public class Bot extends ListenerAdapter {
 
         //if the cache exists, we want to read in from it
         if ( nhl_cache.exists() ) {
-            //Guild/Server, <channel, teamID, numGames>
+            //https://github.com/CrystalSpore/POPHockey/blob/main/CACHE_FORMAT.md
             cacheMap = new HashMap<>();
             Scanner fin = null;
             try {
@@ -135,7 +141,7 @@ public class Bot extends ListenerAdapter {
                     String line = fin.nextLine();
                     if ( !line.equals(cacheVersion) ) {
                         System.err.println("Cache needs to be updated. " +
-                                "Please run update script or manually update based on spec.");
+                                "Please run update script or manually update based on spec. (Current version = " + cacheVersion + ")");
                         System.exit(0);
                         return;
                     }
@@ -143,6 +149,16 @@ public class Bot extends ListenerAdapter {
                 while ( fin.hasNext() ) {
                     String line = fin.nextLine();
                     String[] splitLine = line.split(":");
+
+                    //if there isn't enough for key & value pair, then exit
+                    if ( splitLine.length != 8 )
+                    {
+                        System.err.println("Error reading cache, please verify the cache matches spec...");
+                        System.err.println("\tManual modification of cache may be necessary. " +
+                                "You most likely don't want to modify the first 2 values (Guild & Channel IDs).");
+                        System.exit(0);
+                        return;
+                    }
                     cacheMap.put(
                             new cacheKey(
                                     Long.parseLong(splitLine[0]),
@@ -153,7 +169,8 @@ public class Bot extends ListenerAdapter {
                                     Integer.parseInt(splitLine[3]),
                                     Integer.parseInt(splitLine[4]),
                                     Integer.parseInt(splitLine[5]),
-                                    Boolean.parseBoolean(splitLine[6])
+                                    Integer.parseInt(splitLine[6]),
+                                    Boolean.parseBoolean(splitLine[7])
                             )
                     );
                 }
@@ -235,8 +252,8 @@ public class Bot extends ListenerAdapter {
             int numGames;
             int numWins;
             int numLosses;
+            int numOTLosses;
 
-            boolean keyExists = false;
             boolean statsPublisher = false;
             if ( strings.length >= 3 &&
                     (strings[2].equals("1") || strings[2].equalsIgnoreCase("true")
@@ -247,40 +264,28 @@ public class Bot extends ListenerAdapter {
                 statsPublisher = true;
             }
 
-            for ( cacheKey key : cacheMap.keySet() ) {
-                if ( key.getGuildID() == guildID && key.getChannelID() == channelID && !cacheMap.get(key).isStatsPublisher() ) {
-                    //only allow one hockey team per channel, but allow all stats to be posted in one channel
-                    if ( !statsPublisher ) {
-                        channel.sendMessage("There is already a team setup for this channel. " +
-                                "Please remove team from channel before attempting to setup a new team.").queue();
-                    }
-                    keyExists = true;
-                    break;
-                }
-            }
-
-            if (!keyExists || statsPublisher) {
-                try {
-                    NHLStats teamStats = NHLPolling.teamStats(nhlTeamID);
-                    numGames = teamStats.getGamesPlayed();
-                    numWins = teamStats.getWins();
-                    numLosses = teamStats.getLosses();
-                    channel.sendMessage("Setup \"" + teamStats.getTeamName() + "\" for this channel.").queue();
-                    cacheMap.put(new cacheKey(guildID, channelID), new cacheValue(nhlTeamID, numGames, numWins, numLosses, statsPublisher));
-                    Files.write(Paths.get(nhl_cache.getAbsolutePath()), (guildID + ":" +
-                            channelID + ":" +
-                            nhlTeamID + ":" +
-                            numGames + ":" +
-                            numWins + ":" +
-                            numLosses + ":" +
-                            statsPublisher + "\n").getBytes(), StandardOpenOption.APPEND);
-                } catch (IOException e) {
-                    channel.sendMessage("Error w/ NHL api").queue();
-                    e.printStackTrace();
-                } catch (ParseException e) {
-                    channel.sendMessage("Error parsing team list").queue();
-                    e.printStackTrace();
-                }
+            try {
+                NHLStats teamStats = NHLPolling.teamStats(nhlTeamID);
+                numGames = teamStats.getGamesPlayed();
+                numWins = teamStats.getWins();
+                numLosses = teamStats.getLosses();
+                numOTLosses = teamStats.getOt();
+                channel.sendMessage("Setup \"" + teamStats.getTeamName() + "\" for this channel.").queue();
+                cacheMap.put(new cacheKey(guildID, channelID), new cacheValue(nhlTeamID, numGames, numWins, numLosses, numOTLosses, statsPublisher));
+                Files.write(Paths.get(nhl_cache.getAbsolutePath()), (guildID + ":" +
+                        channelID + ":" +
+                        nhlTeamID + ":" +
+                        numGames + ":" +
+                        numWins + ":" +
+                        numLosses + ":" +
+                        numOTLosses + ":" +
+                        statsPublisher + "\n").getBytes(), StandardOpenOption.APPEND);
+            } catch (IOException e) {
+                channel.sendMessage("Error w/ NHL api").queue();
+                e.printStackTrace();
+            } catch (ParseException e) {
+                channel.sendMessage("Error parsing team list").queue();
+                e.printStackTrace();
             }
         }
     }
@@ -335,13 +340,18 @@ public class Bot extends ListenerAdapter {
         }
     }
 
+    //Wins + Losses + OT Losses = num Games played
+    //  therefore, we need to report all 3 conditions here
     public void winOrLoss(Map.Entry<cacheKey, cacheValue> e, NHLStats teamStats, TextChannel textChannel) {
         //recorded less than actual, indicates a win or loss
         if ( e.getValue().getNumWins() < teamStats.getWins() ) {
             textChannel.sendMessage(teamStats.getTeamName() + " won!").queue();
         }
         else if ( e.getValue().getNumLosses() < teamStats.getLosses() ) {
-            textChannel.sendMessage(teamStats.getTeamName() + " lost").queue();
+            textChannel.sendMessage(teamStats.getTeamName() + " lost.").queue();
+        }
+        else if ( e.getValue().getNumOTLosses() < teamStats.getOt() ) {
+            textChannel.sendMessage(teamStats.getTeamName() + " lost in overtime.").queue();
         }
     }
 
@@ -349,7 +359,7 @@ public class Bot extends ListenerAdapter {
     public void updateCacheEntry(Map.Entry<cacheKey, cacheValue> e, NHLStats teamStats) {
         cacheMap.put(e.getKey(), new cacheValue(
                 e.getValue().getTeamID(), teamStats.getGamesPlayed(),
-                teamStats.getWins(), teamStats.getLosses(), e.getValue().isStatsPublisher()
+                teamStats.getWins(), teamStats.getLosses(), teamStats.getOt(), e.getValue().isStatsPublisher()
         ));
     }
 
