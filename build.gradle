@@ -6,13 +6,16 @@ plugins {
 
 mainClassName = 'com.snreloaded.Bot'
 group 'com.snreloaded'
-version '1.0'
+version '1.0.1'
 
 sourceCompatibility = targetCompatibility = 1.8
 
 repositories {
-    jcenter()
     mavenCentral()
+    maven {
+        name 'm2-dv8tion'
+        url 'https://m2.dv8tion.net/releases'
+    }
 }
 
 dependencies {
@@ -20,7 +23,7 @@ dependencies {
      * JCenter imports
      */
     //https://github.com/DV8FromTheWorld/JDA
-    compile "net.dv8tion:JDA:4.2.0_222"
+    compile "net.dv8tion:JDA:4.4.0_350"
 
     /**
      * Maven Central imports
@@ -35,9 +38,8 @@ dependencies {
     // https://mvnrepository.com/artifact/it.sauronsoftware.cron4j/cron4j
     compile group: 'it.sauronsoftware.cron4j', name: 'cron4j', version: '2.2.5'
     // https://mvnrepository.com/artifact/org.jboss.resteasy/resteasy-client
-    compile group: 'org.jboss.resteasy', name: 'resteasy-client', version: '4.5.8.Final'
-    // https://mvnrepository.com/artifact/org.slf4j/slf4j-log4j12
-    compile group: 'org.slf4j', name: 'slf4j-log4j12', version: '1.7.30'
+    compile group: 'org.jboss.resteasy', name: 'resteasy-client', version: '5.0.1.Final'
+
 }
 
 build {

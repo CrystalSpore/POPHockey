@@ -1,3 +1,5 @@
+
+
 # Cache Data Versioning
 Check [CACHE_FORMAT.md](https://github.com/CrystalSpore/POPHockey/blob/main/CACHE_FORMAT.md) for format of the `.nhl_cache` file in your home directory. Should only need to reference this if the bot states it needs updating on start up. The bot will also state the version to update to.
 
@@ -23,3 +25,14 @@ use `build` instead of `shadowJar` to build minimized jar file (longer build tim
 
 # Contribute
 Look in issues for "Good first issue" if you are new & want a suggestion of where to start. Otherwise, feel free to tackle any issue, or suggest/implement a new feature.
+
+<br/>
+
+-------
+
+## log4j-1.2 warnings at runtime:
+
+In release 1.0 (now named 1.0.0), `slf4j-log4j12` was an included dependency, which uses `log4j 1.2` as it's backend. I have since switched out the backend for `slf4j-api`. While I wasn't doing any logging using `slf4j-log4j12`, one of my dependencies (RestEasy), was using this logging framework for logging.
+
+**At this time, for best security & peace of mind, I advise to upgrade to release `v1.0.1` (or greater)**
+
