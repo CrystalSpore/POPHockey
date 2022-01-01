@@ -139,71 +139,102 @@ public class Bot extends ListenerAdapter {
     public Bot(JDA instance) {
         this.instance = instance;
 
+        String cache_pathname = "";
+        //if OS is Windows
+        if (System.getProperty("os.name").toLowerCase().contains("win")) {
+            cache_pathname = System.getProperty("user.home") + "/POPHockey/nhl_cache";
+        //if OS is not Windows
+        } else {
+            cache_pathname = System.getProperty("user.home") + "/.config/POPHockey/nhl_cache";
+        }
+
         //path to our cache file (starts with a . so hidden file)
-        nhl_cache = new File(System.getProperty("user.home")+"/"+".nhl_cache");
+        nhl_cache = new File(cache_pathname);
 
-        //if the cache exists, we want to read in from it
-        if ( nhl_cache.exists() ) {
-            //https://github.com/CrystalSpore/POPHockey/blob/main/CACHE_FORMAT.md
-            cacheMap = new ConcurrentHashMap<>();
-            Scanner fin = null;
-            try {
-                fin = new Scanner(new FileInputStream(nhl_cache));
-            } catch (FileNotFoundException e) {
-                e.printStackTrace();
+        //if the cache file exists, we want to read in from it
+        if (nhl_cache.exists()) {
+            parseCacheFile();
+        //if the old cache exists, try to move, then read the cache in
+        } else if ( new File(System.getProperty("user.home") + "/.nhl_cache").exists() ) {
+            //create directories for where new cache file lives
+            //if OS is Windows
+            if (System.getProperty("os.name").toLowerCase().contains("win")) {
+                new File( System.getProperty("user.home") + "/POPHockey/").mkdirs();
+                //if OS is not Windows
+            } else {
+                new File(System.getProperty("user.home") + "/.config/POPHockey/").mkdirs();
             }
-            if (fin != null) {
-                if ( fin.hasNext() ) {
-                    String line = fin.nextLine();
-                    if ( !line.equals(cacheVersion) ) {
-                        System.err.println("Cache needs to be updated. " +
-                                "Please run update script or manually update based on spec. (Current version = " + cacheVersion + ")");
-                        System.exit(0);
-                        return;
-                    }
-                }
-                while ( fin.hasNext() ) {
-                    String line = fin.nextLine();
-                    String[] splitLine = line.split(":");
 
-                    //if there isn't enough for key & value pair, then exit
-                    if ( splitLine.length != 8 )
-                    {
-                        System.err.println("Error reading cache, please verify the cache matches spec...");
-                        System.err.println("\tManual modification of cache may be necessary. " +
-                                "You most likely don't want to modify the first 2 values (Guild & Channel IDs).");
-                        System.exit(0);
-                        return;
-                    }
-                    long readGuildID = Long.parseLong(splitLine[0]);
-                    long readChannelID = Long.parseLong(splitLine[1]);
-
-                    if ( !cacheMap.containsKey(readGuildID) ) {
-                        cacheMap.put(readGuildID, new ConcurrentHashMap<>());
-                    }
-
-                    if ( !cacheMap.get(readGuildID).containsKey(readChannelID) ) {
-                        cacheMap.get(readGuildID).put(readChannelID, new CopyOnWriteArrayList<>());
-                    }
-
-                    //Don't need add if absent, since reading from cache file
-                    cacheMap.get(readGuildID).get(readChannelID).add(
-                            new CacheValue(
-                                    Integer.parseInt(splitLine[2]),
-                                    Integer.parseInt(splitLine[3]),
-                                    Integer.parseInt(splitLine[4]),
-                                    Integer.parseInt(splitLine[5]),
-                                    Integer.parseInt(splitLine[6]),
-                                    Boolean.parseBoolean(splitLine[7])
-                            ));
-                }
+            //move cache file
+            boolean moveSuccess = new File(System.getProperty("user.home") + "/.nhl_cache").renameTo(nhl_cache);
+            if ( !moveSuccess ) {
+                System.out.println("Error when moving cache file. Try again or manually move file.");
+                System.exit(-1);
             }
+            parseCacheFile();
         } else { // otherwise create the file
             try {
                 //ignoring output due to checking existence above
                 nhl_cache.createNewFile();
             } catch (IOException e) {
                 e.printStackTrace();
+            }
+        }
+    }
+
+    public void parseCacheFile() {
+        //https://github.com/CrystalSpore/POPHockey/blob/main/CACHE_FORMAT.md
+        cacheMap = new ConcurrentHashMap<>();
+        Scanner fin = null;
+        try {
+            fin = new Scanner(new FileInputStream(nhl_cache));
+        } catch (FileNotFoundException e) {
+            e.printStackTrace();
+        }
+        if (fin != null) {
+            if ( fin.hasNext() ) {
+                String line = fin.nextLine();
+                if ( !line.equals(cacheVersion) ) {
+                    System.err.println("Cache needs to be updated. " +
+                            "Please run update script or manually update based on spec. (Current version = " + cacheVersion + ")");
+                    System.exit(0);
+                    return;
+                }
+            }
+            while ( fin.hasNext() ) {
+                String line = fin.nextLine();
+                String[] splitLine = line.split(":");
+
+                //if there isn't enough for key & value pair, then exit
+                if ( splitLine.length != 8 )
+                {
+                    System.err.println("Error reading cache, please verify the cache matches spec...");
+                    System.err.println("\tManual modification of cache may be necessary. " +
+                            "You most likely don't want to modify the first 2 values (Guild & Channel IDs).");
+                    System.exit(0);
+                    return;
+                }
+                long readGuildID = Long.parseLong(splitLine[0]);
+                long readChannelID = Long.parseLong(splitLine[1]);
+
+                if ( !cacheMap.containsKey(readGuildID) ) {
+                    cacheMap.put(readGuildID, new ConcurrentHashMap<>());
+                }
+
+                if ( !cacheMap.get(readGuildID).containsKey(readChannelID) ) {
+                    cacheMap.get(readGuildID).put(readChannelID, new CopyOnWriteArrayList<>());
+                }
+
+                //Don't need add if absent, since reading from cache file
+                cacheMap.get(readGuildID).get(readChannelID).add(
+                        new CacheValue(
+                                Integer.parseInt(splitLine[2]),
+                                Integer.parseInt(splitLine[3]),
+                                Integer.parseInt(splitLine[4]),
+                                Integer.parseInt(splitLine[5]),
+                                Integer.parseInt(splitLine[6]),
+                                Boolean.parseBoolean(splitLine[7])
+                        ));
             }
         }
     }
