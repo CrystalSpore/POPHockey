@@ -1,4 +1,5 @@
-
+# ***This branch is an archive. Do not use or expect it to work as is***
+This version of the codebase does not work, as of Approximately November 4th of 2023. This branch is being left up as a historical archive of how it used to work.
 
 # Cache Data Versioning
 Check [CACHE_FORMAT.md](https://github.com/CrystalSpore/POPHockey/blob/main/CACHE_FORMAT.md) for format of the `nhl_cache` file. Should only need to reference this if the bot states it needs updating on start up. The bot will also state the version to update to.
