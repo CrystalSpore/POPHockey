@@ -9,10 +9,12 @@ import org.json.simple.parser.ParseException;
 import java.io.IOException;
 import java.net.HttpURLConnection;
 import java.net.URL;
-import java.util.Scanner;
-
+import java.util.*;
 
 public class NHLPolling {
+
+    public static JSONArray priorTeams = new JSONArray();
+    public static long seasonId = 0;
 
     // GET request without needing external libraries. GET on webAddr
     private static String getRequest(String webAddr) throws IOException {
@@ -39,50 +41,130 @@ public class NHLPolling {
         }
     }
 
+    public static void gatherSeasonId() throws IOException, ParseException {
+        String response = getRequest("https://api-web.nhle.com/v1/schedule/now");
+
+        //Start JSON parse
+        JSONObject initialObject = (JSONObject) (new JSONParser().parse(response));
+        JSONArray gameWeek = (JSONArray) initialObject.get("gameWeek");
+        JSONArray games = (JSONArray) ((JSONObject) gameWeek.get(0)).get("games");
+        seasonId = (Long) ((JSONObject) games.get(0)).get("season");
+    }
+
+    private static JSONArray filterToCurrentSeasonTeams(JSONArray fullTeamList) throws IOException, ParseException {
+        // make a clone of the fullTeamList to modify, to prevent concurrent modification exception
+        JSONArray results = (JSONArray) fullTeamList.clone();
+
+        if (priorTeams.isEmpty()) {
+            for (Object o : fullTeamList) {
+                JSONObject curTeam = (JSONObject) o;
+                String TEAM_ABBR = (String) curTeam.get("triCode");
+
+                if (TEAM_ABBR == null) {
+                    results.remove(curTeam);
+                    priorTeams.add(curTeam);
+                    continue;
+                }
+                // GET request for the current season schedule based upon a team's 3-letter code
+                String response = getRequest("https://api-web.nhle.com/v1/club-schedule-season/" + TEAM_ABBR + "/now");
+
+                //Start JSON parse
+                JSONObject initialObject = (JSONObject) (new JSONParser().parse(response));
+                JSONArray games = (JSONArray) initialObject.get("games");
+
+                // If the team has no games for the current season,
+                //   then they aren't in the roster for the current season
+                if (games.isEmpty()) {
+                    results.remove(curTeam);
+                    priorTeams.add(curTeam);
+                }
+            }
+        } else {
+            results.removeAll(priorTeams);
+        }
+
+        return results;
+    }
+
     //check stats for specific NHL team (based on NHL team ID number)
     public static NHLStats teamStats(int teamNumber) throws IOException, ParseException {
 
         //GET request
-        String response = getRequest("http://statsapi.web.nhl.com/api/v1/teams/"+teamNumber+"?expand=team.stats");
+        String response = getRequest("https://api-web.nhle.com/v1/standings/now");
 
         //start JSON parse
         JSONObject initialObject = (JSONObject) (new JSONParser().parse(response));
 
-        //Below is "teams List" but will only be 1 team
-        JSONArray teamsList = (JSONArray) initialObject.get("teams");
-        JSONObject team = (JSONObject) teamsList.get(0);
+        JSONArray standings = (JSONArray) initialObject.get("standings");
+        JSONObject team = null;
 
-        String teamName = (String) team.get("name");
+        String teamTriCode = "";
+        for (Object o : listTeams()) {
+            JSONObject curTeam = (JSONObject) o;
+            if ( (Long) curTeam.get("id") == teamNumber ) {
+                teamTriCode = (String) curTeam.get("triCode");
+            }
+        }
 
-        JSONArray teamStatsArr = (JSONArray) team.get("teamStats");
-        JSONObject teamStats = (JSONObject) teamStatsArr.get(0);
-        JSONArray splits = (JSONArray) teamStats.get("splits");
-        JSONObject stats = (JSONObject) ((JSONObject)splits.get(0)).get("stat");
+        JSONObject standingsToPrint = null;
+
+        for (Object o : standings) {
+            JSONObject curStandings = (JSONObject) o;
+            String teamAbbrev = (String) ((JSONObject) curStandings.get("teamAbbrev")).get("default");
+
+            if ( teamAbbrev.equals(teamTriCode) ) {
+                standingsToPrint = curStandings;
+                break;
+            }
+        }
+
+        if (standingsToPrint == null)
+        {
+            throw new IOException("Team not found for " + teamNumber + " within this list:\n" + standings);
+        }
 
         //serialize parsed JSON to NHLStats object for ease of use in Java
-        NHLStats ret = new Gson().fromJson(stats.toJSONString(), NHLStats.class);
-        ret.setTeamName(teamName);
-        return ret;
+        return new Gson().fromJson(standingsToPrint.toJSONString(), NHLStats.class);
     }
 
     //GET & return list of all teams from NHL API
-    public static String listTeams() throws IOException, ParseException {
+    public static JSONArray listTeams() throws IOException, ParseException {
+        System.out.println(new Date(System.currentTimeMillis()) + "Start List Teams function");
 
         //GET request
-        String response = getRequest("http://statsapi.web.nhl.com/api/v1/teams/");
+        String response = getRequest("https://api.nhle.com/stats/rest/en/team");
 
         //Start JSON parse
         JSONObject initialObject = (JSONObject) (new JSONParser().parse(response));
-        JSONArray teamsList = (JSONArray) initialObject.get("teams");
+        JSONArray teamsList = (JSONArray) initialObject.get("data");
 
-        //build list of teams for printing
-        //  (formatting might need to be fixed for :'s to line up)
+        // filter "bad data"
+        teamsList = filterToCurrentSeasonTeams(teamsList);
+
+        System.out.println(new Date(System.currentTimeMillis()) + "End List Teams function");
+        return teamsList;
+    }
+
+    public static String printListTeams(JSONArray teamsList) {
+        // build list of teams for printing
         JSONObject curTeam = (JSONObject)teamsList.get(0);
-        String ret = curTeam.get("id") + "\t:\t" + curTeam.get("name");
+        String ret = String.format("%2d\t:\t%s", (Long) curTeam.get("id"), curTeam.get("fullName"));
         for ( int i = 1; i < teamsList.size(); i++ ) {
             curTeam = (JSONObject)teamsList.get(i);
-            ret += "\n" + curTeam.get("id") + "\t:\t" + curTeam.get("name");
+
+            ret += String.format("\n%2d\t:\t%s", (Long) curTeam.get("id"), curTeam.get("fullName"));
         }
+
+        // sort the output of the return value, for easier use
+        ArrayList<String> retList = new ArrayList<>(Arrays.asList(ret.split("\n")));
+        Collections.sort(retList);
+
+        ret = "";
+        for ( String s : retList )
+        {
+            ret += s + "\n";
+        }
+
         return ret;
     }
 }

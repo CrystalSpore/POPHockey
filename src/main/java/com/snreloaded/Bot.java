@@ -34,20 +34,30 @@ public class Bot extends ListenerAdapter {
     private final File nhl_cache;
     private static final String CRON_ONE_DAY = "0 0 * * *";
     private static final String CRON_QUARTER_HOUR = "0,15,30,45 * * * *"; //https://crontab.guru/#0,15,30,45_*_*_*_*
+    // CRON_ONE_MINUTE purely for use when testing
     private static final String CRON_ONE_MINUTE = "* * * * *";
     private static final String cacheVersion = "v1.0";
     private static final SimpleDateFormat timeFormat = new SimpleDateFormat("HH:mm:ss.SSS z");
 
-    public static void main(String[] args) throws LoginException {
+    public static void main(String[] args) throws LoginException, IOException, ParseException {
         if (args.length < 1) {
             System.out.println("You have to provide a token as first argument!");
             System.exit(1);
         }
+
+        // use the listTeams command from NHL Polling to pre-populate the current teams...
+        //   This command currently takes ~2 minutes on first run,
+        //   so should run this before the bot is "available".
+        //   Should look into how to store this list in a
+        //   cached manner from season to season, since this
+        //   likely wouldn't change within the season
+        NHLPolling.listTeams();
+
         // args[0] should be the token
         // We only need 2 intents in this bot. We only respond to messages in guilds and private channels.
         // All other events will be disabled.
         JDA instance = JDABuilder.createLight(args[0], GatewayIntent.GUILD_MESSAGES, GatewayIntent.DIRECT_MESSAGES)
-                .setActivity(Activity.playing("Type ~ping"))
+                .setActivity(Activity.playing("Type ~ping or ~help"))
                 .build();
         //We don't immediately add the bot as an event listener, so that we can store the instance into this object
         Bot thisBot = new Bot(instance);
@@ -60,7 +70,13 @@ public class Bot extends ListenerAdapter {
         Scheduler scheduler = new Scheduler();
 
         //Schedule tasks to based on cron timing
-        scheduler.schedule(CRON_QUARTER_HOUR, thisBot::scheduledStats);
+        scheduler.schedule(CRON_ONE_MINUTE, () -> {
+            try {
+                thisBot.scheduledStats();
+            } catch (IOException | ParseException e) {
+                throw new RuntimeException(e);
+            }
+        });
         scheduler.schedule(CRON_ONE_DAY, thisBot::refreshTeams);
 
         //Start scheduler
@@ -245,12 +261,15 @@ public class Bot extends ListenerAdapter {
         //check entire text or start of text for command, then call method
         if (msg.getContentRaw().equals("~ping")) {
             ping(event);
+        } else if (msg.getContentRaw().equals("~help") || msg.getContentRaw().equals("~h")) {
+            help(event);
         } else if (msg.getContentRaw().equals("~listTeams")) {
             listTeams(event);
-        } else if ( (msg.getContentRaw().startsWith("~setupTeam")
-                || msg.getContentRaw().startsWith("~setup ") ) && Objects.requireNonNull(msg.getMember()).hasPermission(Permission.ADMINISTRATOR)) {
+        } else if ( (msg.getContentRaw().startsWith("~setupTeam") || msg.getContentRaw().startsWith("~setup ") )
+                && Objects.requireNonNull(msg.getMember()).hasPermission(Permission.ADMINISTRATOR)) {
             setupTeam(event);
-        } else if (msg.getContentRaw().startsWith("~deleteTeam") && Objects.requireNonNull(msg.getMember()).hasPermission(Permission.ADMINISTRATOR)) {
+        } else if (msg.getContentRaw().startsWith("~deleteTeam")
+                && Objects.requireNonNull(msg.getMember()).hasPermission(Permission.ADMINISTRATOR)) {
             deleteTeam(event);
         }
     }
@@ -263,6 +282,25 @@ public class Bot extends ListenerAdapter {
                 .queue(response /* => Message */ -> response.editMessageFormat("Pong: %d ms", System.currentTimeMillis() - time).queue());
     }
 
+    public void help(MessageReceivedEvent event) {
+        TextChannel channel = event.getTextChannel();
+        String botCommands = "~help or ~h -->\tPrints this help message\n" +
+                "~ping       -->\tResponds \"Pong\" with the round trip latency\n" +
+                "~listTeams  -->\tLists the teams available in the NHL API\n" +
+                "~setupTeam  -->\tRuns the setup process for adding a listener event for a particular team\n" +
+                "\t\t\tto be displayed in the channel where it was setup.\n" +
+                "\t\t\t**Requires ADMINISTRATOR PRIVILEGES**\n" +
+                "~setup      -->\tsame as ~setupTeam\n" +
+                "~deleteTeam -->\tDeletes one of the previously setup listeners.\n" +
+                "\t\t\t**Requires ADMINISTRATOR PRIVILEGES**\n";
+        MessageBuilder builder = new MessageBuilder();
+        builder.appendCodeBlock(botCommands, "");
+        Queue<Message> messages = builder.buildAll(MessageBuilder.SplitPolicy.NEWLINE);
+        for (Message m : messages) {
+            channel.sendMessage(m).queue();
+        }
+    }
+
     //list all teams that NHL reports back from API
     public void listTeams(MessageReceivedEvent event) {
         TextChannel channel = event.getTextChannel();
@@ -271,7 +309,7 @@ public class Bot extends ListenerAdapter {
             MessageBuilder builder = new MessageBuilder();
 
             //NHLPolling is the API class
-            builder.appendCodeBlock(NHLPolling.listTeams(),"");
+            builder.appendCodeBlock(NHLPolling.printListTeams(NHLPolling.listTeams()),"");
             Queue<Message> messages = builder.buildAll(MessageBuilder.SplitPolicy.NEWLINE);
 
             //multi-line message needs a loop to send all lines
@@ -321,10 +359,11 @@ public class Bot extends ListenerAdapter {
 
             try {
                 NHLStats teamStats = NHLPolling.teamStats(nhlTeamID);
+                System.out.println("\n######################" + teamStats + "\n######################");
                 numGames = teamStats.getGamesPlayed();
                 numWins = teamStats.getWins();
                 numLosses = teamStats.getLosses();
-                numOTLosses = teamStats.getOt();
+                numOTLosses = teamStats.getOtLosses();
 
                 if ( !cacheMap.containsKey(guildID) ) {
                     cacheMap.put(guildID, new ConcurrentHashMap<>());
@@ -346,6 +385,7 @@ public class Bot extends ListenerAdapter {
 
                 if (!contains) {
                     cacheMap.get(guildID).get(channelID).add(addValue);
+                    System.out.println(teamStats);
                     channel.sendMessage("Setup \"" + teamStats.getTeamName() + "\" for this channel.").queue();
 
                     Files.write(Paths.get(nhl_cache.getAbsolutePath()), (guildID + ":" +
@@ -485,11 +525,14 @@ public class Bot extends ListenerAdapter {
     //scheduled task, & sets the list of teams in the HashMap teamList
     public void refreshTeams() {
         try {
-            String result = NHLPolling.listTeams();
+            String result = NHLPolling.printListTeams(NHLPolling.listTeams());
             teamList = new HashMap<>();
             String[] lines = result.split("\n");
             for (String l : lines) {
                 String[] parts = l.split("\t");
+                if (parts[0].charAt(0) == ' ') {
+                    parts[0] = parts[0].substring(1);
+                }
                 teamList.put(Integer.parseInt(parts[0]), parts[2]); //parts[1] is ":"
             }
         } catch (Exception e) {
@@ -498,8 +541,11 @@ public class Bot extends ListenerAdapter {
     }
 
     //scheduled task
-    public synchronized void scheduledStats() {
+    public synchronized void scheduledStats() throws IOException, ParseException {
         System.out.println("Starting scheduled tasks > " + timeFormat.format(new Date()));
+
+        NHLPolling.gatherSeasonId();
+
         boolean cacheChanged = false;
         //loop through all entries of cache to check for changes
         for ( Map.Entry<Long,ConcurrentHashMap<Long,CopyOnWriteArrayList<CacheValue>>> cacheSet : cacheMap.entrySet()) {
@@ -562,7 +608,7 @@ public class Bot extends ListenerAdapter {
         else if ( value.getNumLosses() < teamStats.getLosses() ) {
             textChannel.sendMessage(teamStats.getTeamName() + " lost.").queue();
         }
-        else if ( value.getNumOTLosses() < teamStats.getOt() ) {
+        else if ( value.getNumOTLosses() < teamStats.getOtLosses() ) {
             textChannel.sendMessage(teamStats.getTeamName() + " lost in overtime.").queue();
         }
     }
@@ -572,7 +618,7 @@ public class Bot extends ListenerAdapter {
         list.remove(value);
         list.add( new CacheValue(
                 value.getTeamID(), teamStats.getGamesPlayed(),
-                teamStats.getWins(), teamStats.getLosses(), teamStats.getOt(), value.isStatsPublisher()
+                teamStats.getWins(), teamStats.getLosses(), teamStats.getOtLosses(), value.isStatsPublisher()
         ));
     }
 
