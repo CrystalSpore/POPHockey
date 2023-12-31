@@ -13,9 +13,6 @@ import java.util.*;
 
 public class NHLPolling {
 
-    public static JSONArray priorTeams = new JSONArray();
-    public static long seasonId = 0;
-
     // GET request without needing external libraries. GET on webAddr
     private static String getRequest(String webAddr) throws IOException {
 
@@ -41,28 +38,19 @@ public class NHLPolling {
         }
     }
 
-    public static void gatherSeasonId() throws IOException, ParseException {
-        String response = getRequest("https://api-web.nhle.com/v1/schedule/now");
-
-        //Start JSON parse
-        JSONObject initialObject = (JSONObject) (new JSONParser().parse(response));
-        JSONArray gameWeek = (JSONArray) initialObject.get("gameWeek");
-        JSONArray games = (JSONArray) ((JSONObject) gameWeek.get(0)).get("games");
-        seasonId = (Long) ((JSONObject) games.get(0)).get("season");
-    }
-
+    @SuppressWarnings("unchecked")
     private static JSONArray filterToCurrentSeasonTeams(JSONArray fullTeamList) throws IOException, ParseException {
         // make a clone of the fullTeamList to modify, to prevent concurrent modification exception
         JSONArray results = (JSONArray) fullTeamList.clone();
 
-        if (priorTeams.isEmpty()) {
+        if (CacheValue.priorTeams.isEmpty()) {
             for (Object o : fullTeamList) {
                 JSONObject curTeam = (JSONObject) o;
                 String TEAM_ABBR = (String) curTeam.get("triCode");
 
                 if (TEAM_ABBR == null) {
                     results.remove(curTeam);
-                    priorTeams.add(curTeam);
+                    CacheValue.priorTeams.add(TEAM_ABBR);
                     continue;
                 }
                 // GET request for the current season schedule based upon a team's 3-letter code
@@ -76,11 +64,11 @@ public class NHLPolling {
                 //   then they aren't in the roster for the current season
                 if (games.isEmpty()) {
                     results.remove(curTeam);
-                    priorTeams.add(curTeam);
+                    CacheValue.priorTeams.add(TEAM_ABBR);
                 }
             }
         } else {
-            results.removeAll(priorTeams);
+            results.removeAll(CacheValue.priorTeams);
         }
 
         return results;
@@ -129,7 +117,7 @@ public class NHLPolling {
 
     //GET & return list of all teams from NHL API
     public static JSONArray listTeams() throws IOException, ParseException {
-        System.out.println(new Date(System.currentTimeMillis()) + "Start List Teams function");
+        System.out.println(new Date(System.currentTimeMillis()) + " - Start List Teams function");
 
         //GET request
         String response = getRequest("https://api.nhle.com/stats/rest/en/team");
@@ -141,7 +129,7 @@ public class NHLPolling {
         // filter "bad data"
         teamsList = filterToCurrentSeasonTeams(teamsList);
 
-        System.out.println(new Date(System.currentTimeMillis()) + "End List Teams function");
+        System.out.println(new Date(System.currentTimeMillis()) + " - End List Teams function");
         return teamsList;
     }
 

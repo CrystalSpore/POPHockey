@@ -4,19 +4,21 @@ import com.vdurmont.emoji.EmojiParser;
 import it.sauronsoftware.cron4j.Scheduler;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.JDABuilder;
-import net.dv8tion.jda.api.MessageBuilder;
 import net.dv8tion.jda.api.Permission;
 import net.dv8tion.jda.api.entities.*;
+import net.dv8tion.jda.api.entities.channel.concrete.TextChannel;
+import net.dv8tion.jda.api.entities.emoji.Emoji;
 import net.dv8tion.jda.api.events.message.MessageReceivedEvent;
 import net.dv8tion.jda.api.hooks.ListenerAdapter;
 import net.dv8tion.jda.api.requests.GatewayIntent;
+import net.dv8tion.jda.api.utils.MarkdownUtil;
+import net.dv8tion.jda.api.utils.messages.MessageCreateBuilder;
+import net.dv8tion.jda.api.utils.messages.MessageCreateData;
 import net.dv8tion.jda.internal.utils.tuple.ImmutablePair;
 import org.json.simple.parser.ParseException;
 
 import javax.security.auth.login.LoginException;
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
@@ -29,14 +31,13 @@ import java.util.concurrent.CopyOnWriteArrayList;
 public class Bot extends ListenerAdapter {
 
     private final JDA instance;
-    private ConcurrentHashMap<Long, ConcurrentHashMap<Long, CopyOnWriteArrayList<CacheValue>>> cacheMap;
-    private HashMap<Integer, String> teamList;
-    private final File nhl_cache;
+    private static ConcurrentHashMap<Long, ConcurrentHashMap<Long, CopyOnWriteArrayList<CacheValue>>> cacheMap;
+    private static HashMap<Integer, String> teamList;
+    private static File nhl_cache;
     private static final String CRON_ONE_DAY = "0 0 * * *";
     private static final String CRON_QUARTER_HOUR = "0,15,30,45 * * * *"; //https://crontab.guru/#0,15,30,45_*_*_*_*
     // CRON_ONE_MINUTE purely for use when testing
     private static final String CRON_ONE_MINUTE = "* * * * *";
-    private static final String cacheVersion = "v1.0";
     private static final SimpleDateFormat timeFormat = new SimpleDateFormat("HH:mm:ss.SSS z");
 
     public static void main(String[] args) throws LoginException, IOException, ParseException {
@@ -45,32 +46,24 @@ public class Bot extends ListenerAdapter {
             System.exit(1);
         }
 
-        // use the listTeams command from NHL Polling to pre-populate the current teams...
-        //   This command currently takes ~2 minutes on first run,
-        //   so should run this before the bot is "available".
-        //   Should look into how to store this list in a
-        //   cached manner from season to season, since this
-        //   likely wouldn't change within the season
-        NHLPolling.listTeams();
+        nhl_cache = CacheValue.openNHL_Cache(cacheMap);
+        cacheMap = CacheValue.parseCacheFile(nhl_cache);
 
         // args[0] should be the token
         // We only need 2 intents in this bot. We only respond to messages in guilds and private channels.
         // All other events will be disabled.
-        JDA instance = JDABuilder.createLight(args[0], GatewayIntent.GUILD_MESSAGES, GatewayIntent.DIRECT_MESSAGES)
+        JDA instance = JDABuilder.createLight(args[0], GatewayIntent.GUILD_MESSAGES, GatewayIntent.DIRECT_MESSAGES, GatewayIntent.MESSAGE_CONTENT)
                 .setActivity(Activity.playing("Type ~ping or ~help"))
                 .build();
         //We don't immediately add the bot as an event listener, so that we can store the instance into this object
         Bot thisBot = new Bot(instance);
         instance.addEventListener(thisBot);
 
-        //get the list of teams, which will refresh once a day at midnight
-        thisBot.refreshTeams();
-
         //Create new scheduler
         Scheduler scheduler = new Scheduler();
 
         //Schedule tasks to based on cron timing
-        scheduler.schedule(CRON_ONE_MINUTE, () -> {
+        scheduler.schedule(CRON_QUARTER_HOUR, () -> {
             try {
                 thisBot.scheduledStats();
             } catch (IOException | ParseException e) {
@@ -83,177 +76,11 @@ public class Bot extends ListenerAdapter {
         scheduler.start();
     }
 
-    /**
-     * data structure for our cached data
-     */
-    private static class CacheValue {
-        int teamID;
-        int numGames;
-        int numWins;
-        int numLosses;
-        int numOTLosses;
-        boolean statsPublisher;
-
-        public CacheValue(int teamID, int numGames, int numWins, int numLosses, int numOTLosses, boolean statsPublisher) {
-            this.teamID = teamID;
-            this.numGames = numGames;
-            this.numWins = numWins;
-            this.numLosses = numLosses;
-            this.numOTLosses = numOTLosses;
-            this.statsPublisher = statsPublisher;
-        }
-
-        public int getTeamID() {
-            return teamID;
-        }
-
-        public int getNumGames() {
-            return numGames;
-        }
-
-        public int getNumWins() {
-            return numWins;
-        }
-
-        public int getNumLosses() {
-            return numLosses;
-        }
-
-        public int getNumOTLosses() {
-            return numOTLosses;
-        }
-
-        public boolean isStatsPublisher() {
-            return statsPublisher;
-        }
-
-        @Override
-        public boolean equals(Object o) {
-            if ( !(o instanceof CacheValue) ) {
-                return false;
-            } else {
-                CacheValue other = (CacheValue) o;
-                boolean result = other.getTeamID() == this.getTeamID();
-                result &= other.isStatsPublisher() == this.isStatsPublisher();
-                return result;
-            }
-        }
-
-        @Override
-        public String toString() {
-            return "CacheValue{" +
-                    "teamID=" + teamID +
-                    ", numGames=" + numGames +
-                    ", numWins=" + numWins +
-                    ", numLosses=" + numLosses +
-                    ", numOTLosses=" + numOTLosses +
-                    ", statsPublisher=" + statsPublisher +
-                    '}';
-        }
-    }
-
     public Bot(JDA instance) {
         this.instance = instance;
-
-        String cache_pathname = "";
-        //if OS is Windows
-        if (System.getProperty("os.name").toLowerCase().contains("win")) {
-            cache_pathname = System.getProperty("user.home") + "/POPHockey/nhl_cache";
-        //if OS is not Windows
-        } else {
-            cache_pathname = System.getProperty("user.home") + "/.config/POPHockey/nhl_cache";
-        }
-
-        //path to our cache file (starts with a . so hidden file)
-        nhl_cache = new File(cache_pathname);
-
-        //if the cache file exists, we want to read in from it
-        if (nhl_cache.exists()) {
-            parseCacheFile();
-        //if the old cache exists, try to move, then read the cache in
-        } else if ( new File(System.getProperty("user.home") + "/.nhl_cache").exists() ) {
-            //create directories for where new cache file lives
-            //if OS is Windows
-            if (System.getProperty("os.name").toLowerCase().contains("win")) {
-                new File( System.getProperty("user.home") + "/POPHockey/").mkdirs();
-                //if OS is not Windows
-            } else {
-                new File(System.getProperty("user.home") + "/.config/POPHockey/").mkdirs();
-            }
-
-            //move cache file
-            boolean moveSuccess = new File(System.getProperty("user.home") + "/.nhl_cache").renameTo(nhl_cache);
-            if ( !moveSuccess ) {
-                System.out.println("Error when moving cache file. Try again or manually move file.");
-                System.exit(-1);
-            }
-            parseCacheFile();
-        } else { // otherwise create the file
-            try {
-                //ignoring output due to checking existence above
-                nhl_cache.createNewFile();
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
-        }
+        refreshTeams();
     }
 
-    public void parseCacheFile() {
-        //https://github.com/CrystalSpore/POPHockey/blob/main/CACHE_FORMAT.md
-        cacheMap = new ConcurrentHashMap<>();
-        Scanner fin = null;
-        try {
-            fin = new Scanner(new FileInputStream(nhl_cache));
-        } catch (FileNotFoundException e) {
-            e.printStackTrace();
-        }
-        if (fin != null) {
-            if ( fin.hasNext() ) {
-                String line = fin.nextLine();
-                if ( !line.equals(cacheVersion) ) {
-                    System.err.println("Cache needs to be updated. " +
-                            "Please run update script or manually update based on spec. (Current version = " + cacheVersion + ")");
-                    System.exit(0);
-                    return;
-                }
-            }
-            while ( fin.hasNext() ) {
-                String line = fin.nextLine();
-                String[] splitLine = line.split(":");
-
-                //if there isn't enough for key & value pair, then exit
-                if ( splitLine.length != 8 )
-                {
-                    System.err.println("Error reading cache, please verify the cache matches spec...");
-                    System.err.println("\tManual modification of cache may be necessary. " +
-                            "You most likely don't want to modify the first 2 values (Guild & Channel IDs).");
-                    System.exit(0);
-                    return;
-                }
-                long readGuildID = Long.parseLong(splitLine[0]);
-                long readChannelID = Long.parseLong(splitLine[1]);
-
-                if ( !cacheMap.containsKey(readGuildID) ) {
-                    cacheMap.put(readGuildID, new ConcurrentHashMap<>());
-                }
-
-                if ( !cacheMap.get(readGuildID).containsKey(readChannelID) ) {
-                    cacheMap.get(readGuildID).put(readChannelID, new CopyOnWriteArrayList<>());
-                }
-
-                //Don't need add if absent, since reading from cache file
-                cacheMap.get(readGuildID).get(readChannelID).add(
-                        new CacheValue(
-                                Integer.parseInt(splitLine[2]),
-                                Integer.parseInt(splitLine[3]),
-                                Integer.parseInt(splitLine[4]),
-                                Integer.parseInt(splitLine[5]),
-                                Integer.parseInt(splitLine[6]),
-                                Boolean.parseBoolean(splitLine[7])
-                        ));
-            }
-        }
-    }
 
     @Override
     public void onMessageReceived(MessageReceivedEvent event) {
@@ -276,14 +103,13 @@ public class Bot extends ListenerAdapter {
 
     //ping command, for checking bot latency
     public void ping(MessageReceivedEvent event) {
-        TextChannel channel = event.getTextChannel();
+        TextChannel channel = (TextChannel) event.getChannel();
         long time = System.currentTimeMillis();
         channel.sendMessage("Pong!") /* => RestAction<Message> */
                 .queue(response /* => Message */ -> response.editMessageFormat("Pong: %d ms", System.currentTimeMillis() - time).queue());
     }
 
     public void help(MessageReceivedEvent event) {
-        TextChannel channel = event.getTextChannel();
         String botCommands = "~help or ~h -->\tPrints this help message\n" +
                 "~ping       -->\tResponds \"Pong\" with the round trip latency\n" +
                 "~listTeams  -->\tLists the teams available in the NHL API\n" +
@@ -293,29 +119,25 @@ public class Bot extends ListenerAdapter {
                 "~setup      -->\tsame as ~setupTeam\n" +
                 "~deleteTeam -->\tDeletes one of the previously setup listeners.\n" +
                 "\t\t\t**Requires ADMINISTRATOR PRIVILEGES**\n";
-        MessageBuilder builder = new MessageBuilder();
-        builder.appendCodeBlock(botCommands, "");
-        Queue<Message> messages = builder.buildAll(MessageBuilder.SplitPolicy.NEWLINE);
-        for (Message m : messages) {
-            channel.sendMessage(m).queue();
+
+        TextChannel channel = (TextChannel) event.getChannel();
+        try (MessageCreateData message =
+                     new MessageCreateBuilder()
+                             .setContent(MarkdownUtil.codeblock(botCommands))
+                             .build()) {
+            channel.sendMessage(message).queue();
         }
     }
 
     //list all teams that NHL reports back from API
     public void listTeams(MessageReceivedEvent event) {
-        TextChannel channel = event.getTextChannel();
+        TextChannel channel = (TextChannel) event.getChannel();
         try {
             //multi-line messages need a MessageBuilder
-            MessageBuilder builder = new MessageBuilder();
-
-            //NHLPolling is the API class
-            builder.appendCodeBlock(NHLPolling.printListTeams(NHLPolling.listTeams()),"");
-            Queue<Message> messages = builder.buildAll(MessageBuilder.SplitPolicy.NEWLINE);
-
-            //multi-line message needs a loop to send all lines
-            for (Message m : messages) {
-                channel.sendMessage(m).queue();
-            }
+            MessageCreateData message = new MessageCreateBuilder()
+                    .setContent(MarkdownUtil.codeblock(NHLPolling.printListTeams(NHLPolling.listTeams())))
+                    .build();
+            channel.sendMessage(message).queue();
         } catch (IOException e) {
             channel.sendMessage("Error w/ NHL api").queue();
             e.printStackTrace();
@@ -327,20 +149,16 @@ public class Bot extends ListenerAdapter {
 
     //setup a channel with auto reporting team stats
     public void setupTeam(MessageReceivedEvent event) {
-        TextChannel channel = event.getTextChannel();
+        TextChannel channel = (TextChannel) event.getChannel();
         String[] strings = event.getMessage().getContentRaw().split(" ");
 
         //help block
         if ( strings.length == 1 || strings[1].equalsIgnoreCase("h") || strings[1].equalsIgnoreCase("help") ) {
-            MessageBuilder builder = new MessageBuilder();
-            builder.appendCodeBlock("Format as > ~setupTeam <teamID>\n\tSetup NHL team listener in current channel.\n\tUse ~listTeams to find the teamID.","");
-            Queue<Message> messages = builder.buildAll(MessageBuilder.SplitPolicy.NEWLINE);
-            for (Message m : messages) {
-                channel.sendMessage(m).queue();
-            }
+            MessageCreateData message = new MessageCreateBuilder().setContent(MarkdownUtil.codeblock("Format as > ~setupTeam <teamID>\n\tSetup NHL team listener in current channel.\n\tUse ~listTeams to find the teamID.","")).build();
+            channel.sendMessage(message).queue();
         } else { //setup logic block
             long guildID = event.getGuild().getIdLong();
-            long channelID = event.getTextChannel().getIdLong();
+            long channelID = event.getChannel().getIdLong();
             int nhlTeamID = Integer.parseInt(strings[1]);
             int numGames;
             int numWins;
@@ -412,14 +230,15 @@ public class Bot extends ListenerAdapter {
     //remove one of the previously setup teams
     public void deleteTeam(MessageReceivedEvent event) {
         //prepare values for use in method
-        TextChannel channel = event.getTextChannel();
+        TextChannel channel = (TextChannel) event.getChannel();
         long guildID = event.getGuild().getIdLong();
-        long channelID = event.getTextChannel().getIdLong();
+        long channelID = event.getChannel().getIdLong();
         ArrayList<Triple<Integer, String, Boolean>> channelTeams = new ArrayList<>();
         ArrayList<ImmutablePair<Integer, CacheValue>> values = new ArrayList<>();
         CopyOnWriteArrayList<CacheValue> currentChannelList = cacheMap.get(guildID).get(channelID);
         for ( CacheValue value : currentChannelList ) {
             int teamNumber = value.getTeamID();
+            System.out.println("teamNumber: " + teamNumber + " teamNumber: " + teamList.get(teamNumber) + " isStatsPublisher: " + value.isStatsPublisher());
             channelTeams.add(new Triple<>(teamNumber, teamList.get(teamNumber), value.isStatsPublisher()));
             values.add(new ImmutablePair<>(value.getTeamID(), value));
         }
@@ -459,19 +278,19 @@ public class Bot extends ListenerAdapter {
                 Message message = channel.sendMessage("React with " +
                         EmojiParser.parseToUnicode(":information_source:") + " for removing stats publisher, or " +
                         EmojiParser.parseToUnicode(":waving_white_flag:") + " for removing win/loss publisher.").complete();
-                message.addReaction(EmojiParser.parseToUnicode(":information_source:")).queue();
-                message.addReaction(EmojiParser.parseToUnicode(":waving_white_flag:")).queue();
+                message.addReaction(Emoji.fromUnicode("U+2139")/*:information_source:*/).queue();
+                message.addReaction(Emoji.fromUnicode("U+1F3F3")/*:waving_white_flag:*/).queue();
 
-                //Wait 3 seconds
+                //Wait 15 seconds
                 try {
-                    Thread.sleep(3000L);
+                    Thread.sleep(15000L);
                 } catch (InterruptedException e) {
                     e.printStackTrace();
                 }
 
                 //get list of users for both reactions (minus bot) & get author of original event
-                List<User> usersInfo = message.retrieveReactionUsers(EmojiParser.parseToUnicode(":information_source:")).complete();
-                List<User> usersFlag = message.retrieveReactionUsers(EmojiParser.parseToUnicode(":waving_white_flag:")).complete();
+                List<User> usersInfo = message.retrieveReactionUsers(Emoji.fromUnicode("U+2139")/*:information_source:*/).complete();
+                List<User> usersFlag = message.retrieveReactionUsers(Emoji.fromUnicode("U+1F3F3")/*:waving_white_flag:*/).complete();
                 usersInfo.remove(instance.getSelfUser());
                 usersFlag.remove(instance.getSelfUser());
                 User author = event.getAuthor();
@@ -481,7 +300,7 @@ public class Bot extends ListenerAdapter {
                     channel.sendMessage("Re-run command & only respond with 1 emote.").queue();
                 //Must have a response
                 } else if (!usersInfo.contains(author) && !usersFlag.contains(author)) {
-                    channel.sendMessage("Response time-out. Please respond within 3 seconds.").queue();
+                    channel.sendMessage("Response time-out. Please respond within 15 seconds.").queue();
                 //Remove stat publisher logic
                 } else if ( usersInfo.contains(author) ) {
                     CacheValue removeValue = null;
@@ -517,7 +336,7 @@ public class Bot extends ListenerAdapter {
 
             //if cache was updated, we need to rewrite the cache file
             if (cacheChanged) {
-                rewriteCacheFile();
+                CacheValue.rewriteCacheFile(cacheMap, nhl_cache);
             }
         }
     }
@@ -543,8 +362,6 @@ public class Bot extends ListenerAdapter {
     //scheduled task
     public synchronized void scheduledStats() throws IOException, ParseException {
         System.out.println("Starting scheduled tasks > " + timeFormat.format(new Date()));
-
-        NHLPolling.gatherSeasonId();
 
         boolean cacheChanged = false;
         //loop through all entries of cache to check for changes
@@ -584,18 +401,17 @@ public class Bot extends ListenerAdapter {
         }
 
         if (cacheChanged) {
-            rewriteCacheFile();
+            CacheValue.rewriteCacheFile(cacheMap, nhl_cache);
         }
         System.out.println("Finished with scheduled tasks > " + timeFormat.format(new Date()));
     }
 
     public void printStats(NHLStats teamStats, TextChannel textChannel) {
-        MessageBuilder builder = new MessageBuilder();
-        builder.appendCodeBlock(teamStats.toString(), "");
-        Queue<Message> messages = builder.buildAll(MessageBuilder.SplitPolicy.NEWLINE);
-        for (Message m : messages) {
-            textChannel.sendMessage(m).queue();
-        }
+        MessageCreateData message =
+                new MessageCreateBuilder()
+                        .setContent(MarkdownUtil.codeblock(teamStats.toString()))
+                        .build();
+        textChannel.sendMessage(message).queue();
     }
 
     //Wins + Losses + OT Losses = num Games played
@@ -620,36 +436,5 @@ public class Bot extends ListenerAdapter {
                 value.getTeamID(), teamStats.getGamesPlayed(),
                 teamStats.getWins(), teamStats.getLosses(), teamStats.getOtLosses(), value.isStatsPublisher()
         ));
-    }
-
-    public void rewriteCacheFile() {
-        try {
-            // delete & remake before writing
-            nhl_cache.delete();
-            nhl_cache.createNewFile();
-            // write cache version
-            Files.write(Paths.get(nhl_cache.getAbsolutePath()), (cacheVersion + "\n").getBytes(), StandardOpenOption.APPEND);
-            // write all of cache back out
-
-            for ( Map.Entry<Long,ConcurrentHashMap<Long,CopyOnWriteArrayList<CacheValue>>> cacheSet : cacheMap.entrySet()) {
-                Long guildID = cacheSet.getKey();
-                ConcurrentHashMap<Long, CopyOnWriteArrayList<CacheValue>> currentGuildMap = cacheSet.getValue();
-                for (Map.Entry<Long, CopyOnWriteArrayList<CacheValue>> e : currentGuildMap.entrySet()) {
-                    Long channelID = e.getKey();
-                    for ( CacheValue value : e.getValue() ) {
-                        Files.write(Paths.get(nhl_cache.getAbsolutePath()), (guildID + ":" +
-                                channelID + ":" +
-                                value.getTeamID() + ":" +
-                                value.getNumGames() + ":" +
-                                value.getNumWins() + ":" +
-                                value.getNumLosses() + ":" +
-                                value.getNumOTLosses() + ":" +
-                                value.isStatsPublisher() + "\n").getBytes(), StandardOpenOption.APPEND);
-                    }
-                }
-            }
-        } catch (IOException ex) {
-            ex.printStackTrace();
-        }
     }
 }
